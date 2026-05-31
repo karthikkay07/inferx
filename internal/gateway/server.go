@@ -31,13 +31,14 @@ type Server struct {
 }
 
 func New(cfg config.GatewayConfig) *Server {
-	rl := mw.NewLimiter(cfg.RateLimit.RPS, cfg.RateLimit.Burst)
+	ipLimiter := mw.NewIPLimiter(cfg.RateLimit.IPRequestsPerSec, cfg.RateLimit.IPBurst)
+	tenantLimiter := mw.NewTenantLimiter(cfg.EnterpriseLimits)
 	jobs := handler.NewJobHandler(stubClient{})
 
 	return &Server{
 		http: &http.Server{
 			Addr:         cfg.HTTPAddr,
-			Handler:      newRouter(cfg, jobs, rl),
+			Handler:      newRouter(cfg, jobs, ipLimiter, tenantLimiter),
 			ReadTimeout:  15 * time.Second,
 			WriteTimeout: 30 * time.Second,
 			IdleTimeout:  60 * time.Second,

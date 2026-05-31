@@ -7,45 +7,65 @@ import (
 	"strings"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	iauth "github.com/karthikkay07/inferx/internal/auth"
 )
 
 type ctxKey string
 
 const CtxKeyClaims ctxKey = "claims"
 
+// Claims is stored in context after successful authentication.
 type Claims struct {
 	jwt.RegisteredClaims
-	KeyID  string   `json:"kid"`
-	Scopes []string `json:"scopes"`
+	TenantID string   `json:"tenant_id"`
+	TierStr  string   `json:"tier"` // JSON field stays "tier" for JWT interop
+	Scopes   []string `json:"scopes"`
 }
 
+// KeyLookupFunc resolves an API key to its tenant ID and tier.
+// Decouples middleware from the config package.
+type KeyLookupFunc func(key string) (tenantID string, tier iauth.Tier, ok bool)
+
 // Auth validates X-API-Key or Authorization: Bearer <jwt>.
-// Attach this only to protected route groups — /health and /ready bypass it.
-func Auth(keys map[string]struct{}, jwtSecret []byte) func(http.Handler) http.Handler {
+// On success it sets TenantID and Tier into context via internal/auth helpers.
+// Attach only to protected route groups — /health and /ready bypass it.
+func Auth(lookup KeyLookupFunc, jwtSecret []byte) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			var (
-				claims *Claims
-				err    error
-			)
+			var claims *Claims
 
 			switch {
 			case r.Header.Get("X-API-Key") != "":
-				claims, err = validateAPIKey(r.Header.Get("X-API-Key"), keys)
+				tenantID, tier, ok := lookup(r.Header.Get("X-API-Key"))
+				if !ok {
+					writeUnauthorized(w, "invalid api key")
+					return
+				}
+				claims = &Claims{
+					TenantID: tenantID,
+					TierStr:  tier.String(),
+					Scopes:   []string{"*"},
+				}
+
 			case strings.HasPrefix(r.Header.Get("Authorization"), "Bearer "):
 				token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+				var err error
 				claims, err = validateJWT(token, jwtSecret)
+				if err != nil {
+					writeUnauthorized(w, "invalid token")
+					return
+				}
+
 			default:
 				writeUnauthorized(w, "missing credentials")
 				return
 			}
 
-			if err != nil {
-				writeUnauthorized(w, "invalid credentials")
-				return
-			}
-
+			// Propagate tenant identity everywhere downstream via canonical helpers.
 			ctx := context.WithValue(r.Context(), CtxKeyClaims, claims)
+			ctx = iauth.SetTenantID(ctx, claims.TenantID)
+			ctx = iauth.SetTier(ctx, iauth.TierFromString(claims.TierStr))
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -54,13 +74,6 @@ func Auth(keys map[string]struct{}, jwtSecret []byte) func(http.Handler) http.Ha
 func ClaimsFromCtx(ctx context.Context) *Claims {
 	c, _ := ctx.Value(CtxKeyClaims).(*Claims)
 	return c
-}
-
-func validateAPIKey(key string, keys map[string]struct{}) (*Claims, error) {
-	if _, ok := keys[key]; !ok {
-		return nil, errors.New("unknown api key")
-	}
-	return &Claims{KeyID: key, Scopes: []string{"*"}}, nil
 }
 
 func validateJWT(tokenStr string, secret []byte) (*Claims, error) {

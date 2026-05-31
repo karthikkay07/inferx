@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net"
+	"strings"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -11,6 +12,7 @@ import (
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
 
+	iauth "github.com/karthikkay07/inferx/internal/auth"
 	"github.com/karthikkay07/inferx/internal/config"
 	"github.com/karthikkay07/inferx/internal/gateway/handler"
 )
@@ -25,7 +27,7 @@ func newGRPCServer(cfg config.GatewayConfig, jobs *handler.JobHandler) *grpcServ
 		grpc.ChainUnaryInterceptor(
 			grpcRecovery(),
 			grpcLogger(),
-			grpcAuth(cfg.APIKeys, cfg.JWTSecret),
+			grpcAuth(cfg),
 		),
 	)
 
@@ -73,12 +75,14 @@ func grpcLogger() grpc.UnaryServerInterceptor {
 		if err != nil {
 			code = status.Code(err)
 		}
-		slog.Info("grpc", "method", info.FullMethod, "code", code.String())
+		tenantID := iauth.GetTenantID(ctx)
+		slog.Info("grpc", "method", info.FullMethod, "code", code.String(), "tenant_id", tenantID)
 		return resp, err
 	}
 }
 
-func grpcAuth(keys map[string]struct{}, _ []byte) grpc.UnaryServerInterceptor {
+// grpcAuth validates the API key from gRPC metadata and sets tenant context.
+func grpcAuth(cfg config.GatewayConfig) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, h grpc.UnaryHandler) (any, error) {
 		md, ok := metadata.FromIncomingContext(ctx)
 		if !ok {
@@ -86,15 +90,21 @@ func grpcAuth(keys map[string]struct{}, _ []byte) grpc.UnaryServerInterceptor {
 		}
 
 		if vals := md.Get("x-api-key"); len(vals) > 0 {
-			if _, valid := keys[vals[0]]; valid {
-				return h(ctx, req)
+			entry, found := cfg.APIKeyStore[vals[0]]
+			if !found {
+				return nil, status.Error(codes.Unauthenticated, "invalid api key")
 			}
+			ctx = iauth.SetTenantID(ctx, entry.TenantID)
+			ctx = iauth.SetTier(ctx, entry.Tier)
+			return h(ctx, req)
 		}
 
-		// JWT path: parse Bearer from "authorization" metadata key
-		// TODO: wire validateJWT from middleware/auth.go once JWT secret is threaded through
-		if vals := md.Get("authorization"); len(vals) > 0 && len(vals[0]) > 7 {
-			_ = vals[0][7:] // token = vals[0][7:] (after "Bearer ")
+		if vals := md.Get("authorization"); len(vals) > 0 {
+			bearer := vals[0]
+			if strings.HasPrefix(bearer, "Bearer ") {
+				// TODO: wire validateJWT from middleware/auth.go
+				_ = strings.TrimPrefix(bearer, "Bearer ")
+			}
 		}
 
 		return nil, status.Error(codes.Unauthenticated, "invalid credentials")

@@ -7,25 +7,28 @@ import (
 	"time"
 
 	"golang.org/x/time/rate"
+
+	iauth "github.com/karthikkay07/inferx/internal/auth"
 )
 
-const clientTTL = 5 * time.Minute
+// ---- IP-based global limiter ------------------------------------------------
+// Applied before auth to protect all routes (including /health) from flooding.
 
-type Limiter struct {
+type IPLimiter struct {
 	mu      sync.Mutex
-	clients map[string]*clientState
+	clients map[string]*ipState
 	rate    rate.Limit
 	burst   int
 }
 
-type clientState struct {
+type ipState struct {
 	limiter  *rate.Limiter
 	lastSeen time.Time
 }
 
-func NewLimiter(rps float64, burst int) *Limiter {
-	l := &Limiter{
-		clients: make(map[string]*clientState),
+func NewIPLimiter(rps float64, burst int) *IPLimiter {
+	l := &IPLimiter{
+		clients: make(map[string]*ipState),
 		rate:    rate.Limit(rps),
 		burst:   burst,
 	}
@@ -33,38 +36,36 @@ func NewLimiter(rps float64, burst int) *Limiter {
 	return l
 }
 
-func (l *Limiter) Middleware(next http.Handler) http.Handler {
+func (l *IPLimiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		key := clientKey(r)
-		if !l.allow(key) {
-			w.Header().Set("Content-Type", "application/json")
-			http.Error(w, `{"error":"rate limit exceeded"}`, http.StatusTooManyRequests)
+		ip := realIP(r)
+		if !l.allow(ip) {
+			rateLimitError(w, "too many requests")
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
 }
 
-func (l *Limiter) allow(key string) bool {
+func (l *IPLimiter) allow(ip string) bool {
 	l.mu.Lock()
-	c, ok := l.clients[key]
+	s, ok := l.clients[ip]
 	if !ok {
-		c = &clientState{limiter: rate.NewLimiter(l.rate, l.burst)}
-		l.clients[key] = c
+		s = &ipState{limiter: rate.NewLimiter(l.rate, l.burst)}
+		l.clients[ip] = s
 	}
-	c.lastSeen = time.Now()
+	s.lastSeen = time.Now()
 	l.mu.Unlock()
-	return c.limiter.Allow()
+	return s.limiter.Allow()
 }
 
-// cleanup removes client entries that haven't been seen recently.
-func (l *Limiter) cleanup() {
-	ticker := time.NewTicker(clientTTL)
+func (l *IPLimiter) cleanup() {
+	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 	for range ticker.C {
 		l.mu.Lock()
-		for k, c := range l.clients {
-			if time.Since(c.lastSeen) > clientTTL {
+		for k, s := range l.clients {
+			if time.Since(s.lastSeen) > 5*time.Minute {
 				delete(l.clients, k)
 			}
 		}
@@ -72,12 +73,125 @@ func (l *Limiter) cleanup() {
 	}
 }
 
-// clientKey uses API key when present (more generous budget), falls back to IP.
-func clientKey(r *http.Request) string {
-	if k := r.Header.Get("X-API-Key"); k != "" {
-		return "key:" + k
+// ---- Tenant-aware tier limiter ----------------------------------------------
+// Applied inside the auth group. Tracks API calls/hr and job submissions/hr
+// separately, per tenant, according to their tier's default limits
+// (or enterprise overrides).
+
+type TenantLimiter struct {
+	mu        sync.Mutex
+	tenants   map[string]*tenantBucket
+	overrides map[string]iauth.Limits // tenantID → custom limits
+}
+
+type tenantBucket struct {
+	tier     iauth.Tier
+	api      *rate.Limiter // nil = unlimited
+	jobs     *rate.Limiter // nil = unlimited
+	lastSeen time.Time
+}
+
+func NewTenantLimiter(overrides map[string]iauth.Limits) *TenantLimiter {
+	tl := &TenantLimiter{
+		tenants:   make(map[string]*tenantBucket),
+		overrides: overrides,
 	}
-	return "ip:" + realIP(r)
+	go tl.cleanup()
+	return tl
+}
+
+// MiddlewareAPI checks the API calls/hr budget for every protected request.
+func (tl *TenantLimiter) MiddlewareAPI(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tenantID := iauth.GetTenantID(r.Context())
+		if tenantID == "" {
+			next.ServeHTTP(w, r) // no tenant context — shouldn't happen on protected routes
+			return
+		}
+		b := tl.bucket(tenantID, iauth.GetTier(r.Context()))
+		if b.api != nil && !b.api.Allow() {
+			rateLimitError(w, "API call rate limit exceeded — upgrade your plan or retry next hour")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// MiddlewareJob additionally checks the jobs/hr budget. Wrap POST /v1/jobs with this.
+func (tl *TenantLimiter) MiddlewareJob(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tenantID := iauth.GetTenantID(r.Context())
+		if tenantID == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		b := tl.bucket(tenantID, iauth.GetTier(r.Context()))
+		if b.jobs != nil && !b.jobs.Allow() {
+			rateLimitError(w, "job submission rate limit exceeded — upgrade your plan or retry next hour")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (tl *TenantLimiter) bucket(tenantID string, tier iauth.Tier) *tenantBucket {
+	tl.mu.Lock()
+	defer tl.mu.Unlock()
+
+	b, ok := tl.tenants[tenantID]
+	// Recreate bucket if tier changed (e.g. plan upgrade takes effect immediately).
+	if !ok || b.tier != tier {
+		limits := tl.limitsFor(tenantID, tier)
+		b = &tenantBucket{
+			tier: tier,
+			api:  hourlyLimiter(limits.APIPerHour),
+			jobs: hourlyLimiter(limits.JobsPerHour),
+		}
+		tl.tenants[tenantID] = b
+	}
+	b.lastSeen = time.Now()
+	return b
+}
+
+func (tl *TenantLimiter) limitsFor(tenantID string, tier iauth.Tier) iauth.Limits {
+	if override, ok := tl.overrides[tenantID]; ok {
+		return override
+	}
+	return iauth.DefaultLimits[tier]
+}
+
+func (tl *TenantLimiter) cleanup() {
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		tl.mu.Lock()
+		for k, b := range tl.tenants {
+			if time.Since(b.lastSeen) > time.Hour {
+				delete(tl.tenants, k)
+			}
+		}
+		tl.mu.Unlock()
+	}
+}
+
+// hourlyLimiter creates a token-bucket with a per-hour rate and burst equal to
+// the full hourly allowance (lets a tenant "save up" and burst, same as most APIs).
+// Returns nil for unlimited (perHour == 0).
+func hourlyLimiter(perHour int) *rate.Limiter {
+	if perHour == 0 {
+		return nil
+	}
+	r := rate.Limit(float64(perHour) / 3600.0)
+	return rate.NewLimiter(r, perHour)
+}
+
+// ---- shared helpers ---------------------------------------------------------
+
+func rateLimitError(w http.ResponseWriter, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Retry-After", "3600")
+	w.WriteHeader(http.StatusTooManyRequests)
+	w.Write([]byte(`{"error":"` + msg + `"}`)) //nolint:errcheck
 }
 
 func realIP(r *http.Request) string {
