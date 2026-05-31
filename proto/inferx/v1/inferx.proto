@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package inferx.v1;
+
+option go_package = "github.com/karthikkay07/inferx/gen/inferx/v1;inferxv1";
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+// Gateway is the external-facing API for submitting and tracking benchmark jobs.
+service Gateway {
+  rpc SubmitJob(SubmitJobRequest)     returns (Job);
+  rpc GetJob(GetJobRequest)           returns (Job);
+  rpc CancelJob(CancelJobRequest)     returns (google.protobuf.Empty);
+  rpc StreamResults(GetJobRequest)    returns (stream BenchmarkResult);
+}
+
+message Workload {
+  int32 prompt_tokens     = 1;
+  int32 completion_tokens = 2;
+  int32 concurrency       = 3;
+  int32 duration_secs     = 4;
+}
+
+message SubmitJobRequest {
+  string   model    = 1;
+  string   engine   = 2;
+  Workload workload = 3;
+}
+
+message GetJobRequest {
+  string id = 1;
+}
+
+message CancelJobRequest {
+  string id = 1;
+}
+
+message Job {
+  string                    id         = 1;
+  string                    status     = 2;
+  string                    model      = 3;
+  string                    engine     = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+message BenchmarkResult {
+  string id            = 1;
+  string job_id        = 2;
+  double ttft_ms       = 3;
+  double itl_ms        = 4;
+  double throughput    = 5;
+  int32  gpu_memory_mb = 6;
+  double kv_cache_hit  = 7;
+  double error_rate    = 8;
+  double cost_per_mtok = 9;
+}
