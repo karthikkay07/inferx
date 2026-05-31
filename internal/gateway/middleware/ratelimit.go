@@ -103,8 +103,8 @@ func NewTenantLimiter(overrides map[string]iauth.Limits) *TenantLimiter {
 // MiddlewareAPI checks the API calls/hr budget for every protected request.
 func (tl *TenantLimiter) MiddlewareAPI(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		tenantID := iauth.GetTenantID(r.Context())
-		if tenantID == "" {
+		tenantID, ok := iauth.GetTenantID(r.Context())
+		if !ok {
 			next.ServeHTTP(w, r) // no tenant context — shouldn't happen on protected routes
 			return
 		}
@@ -120,8 +120,8 @@ func (tl *TenantLimiter) MiddlewareAPI(next http.Handler) http.Handler {
 // MiddlewareJob additionally checks the jobs/hr budget. Wrap POST /v1/jobs with this.
 func (tl *TenantLimiter) MiddlewareJob(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		tenantID := iauth.GetTenantID(r.Context())
-		if tenantID == "" {
+		tenantID, ok := iauth.GetTenantID(r.Context())
+		if !ok {
 			next.ServeHTTP(w, r)
 			return
 		}

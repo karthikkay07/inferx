@@ -1,0 +1,1 @@
+-- River queue tables are created programmatically via rivermigrate in queue/client.go

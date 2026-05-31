@@ -75,7 +75,7 @@ func grpcLogger() grpc.UnaryServerInterceptor {
 		if err != nil {
 			code = status.Code(err)
 		}
-		tenantID := iauth.GetTenantID(ctx)
+		tenantID, _ := iauth.GetTenantID(ctx)
 		slog.Info("grpc", "method", info.FullMethod, "code", code.String(), "tenant_id", tenantID)
 		return resp, err
 	}

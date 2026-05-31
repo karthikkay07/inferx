@@ -47,7 +47,7 @@ func OTelTrace(next http.Handler) http.Handler {
 
 		// Tenant ID may be empty here (set by Auth later for protected routes).
 		// The span attribute is set now and can be enriched downstream.
-		if id := iauth.GetTenantID(ctx); id != "" {
+		if id, ok := iauth.GetTenantID(ctx); ok {
 			span.SetAttributes(attribute.String("tenant_id", id))
 		}
 
