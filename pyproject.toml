@@ -1,0 +1,14 @@
+[project]
+name = "inferx-worker"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "vllm",
+    "requests",
+    "pydantic",
+    "optuna",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
