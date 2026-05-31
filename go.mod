@@ -1,3 +1,3 @@
-module github.com/inferx/inferx
+module github.com/karthikkay07/inferx
 
 go 1.22
