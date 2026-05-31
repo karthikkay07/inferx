@@ -15,8 +15,10 @@ func Logger(next http.Handler) http.Handler {
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", rw.status,
-			"duration", time.Since(start).String(),
-			"remote_addr", r.RemoteAddr,
+			"duration_ms", time.Since(start).Milliseconds(),
+			"remote_addr", realIP(r),
+			"request_id", GetRequestID(r.Context()),
+			"trace_id", GetTraceID(r.Context()),
 		)
 	})
 }

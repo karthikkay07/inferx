@@ -8,4 +8,5 @@ require (
 	golang.org/x/time v0.5.0
 	google.golang.org/grpc v1.62.1
 	google.golang.org/protobuf v1.33.0
+	go.opentelemetry.io/otel v1.24.0
 )

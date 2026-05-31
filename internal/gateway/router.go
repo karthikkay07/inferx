@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -19,19 +20,22 @@ func newRouter(
 ) http.Handler {
 	r := chi.NewRouter()
 
-	// Global — runs on every request including /health
-	r.Use(mw.Recovery)
-	r.Use(mw.Logger)
-	r.Use(ipLimiter.Middleware) // coarse IP guard before tenant context exists
+	// ── Global middleware (all routes, in order) ────────────────────────────
+	r.Use(mw.Recovery)                   // catch panics before anything else
+	r.Use(mw.RequestID)                  // inject/propagate X-Request-ID
+	r.Use(mw.Logger)                     // structured log: method, path, status, duration, request_id, trace_id
+	r.Use(mw.OTelTrace)                  // start server span, propagate W3C TraceContext
+	r.Use(ipLimiter.Middleware)          // coarse IP guard (pre-auth, covers public routes)
+	r.Use(mw.Timeout(30 * time.Second)) // hard deadline — must come before any I/O
 
-	// Public — no auth, no tenant limits
+	// ── Public routes (no auth) ─────────────────────────────────────────────
 	r.Get("/health", handler.Health)
 	r.Get("/ready", handler.Ready(jobs))
 
-	// Protected — auth sets tenant_id + tier in context, then tier limits apply
+	// ── Protected routes ────────────────────────────────────────────────────
 	r.Group(func(r chi.Router) {
-		r.Use(mw.Auth(keyLookupFrom(cfg), cfg.JWTSecret))
-		r.Use(tenantLimiter.MiddlewareAPI) // counts every /v1/* call against API budget
+		r.Use(mw.Auth(keyLookupFrom(cfg), cfg.JWTSecret)) // sets tenant_id + tier in ctx
+		r.Use(tenantLimiter.MiddlewareAPI)                 // checks API calls/hr budget
 
 		r.Route("/v1", func(r chi.Router) {
 			// POST /jobs also burns from the jobs/hr budget
