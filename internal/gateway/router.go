@@ -39,7 +39,7 @@ func newRouter(
 
 		r.Route("/v1", func(r chi.Router) {
 			// POST /jobs also burns from the jobs/hr budget
-			r.Post("/jobs", tenantLimiter.MiddlewareJob(http.HandlerFunc(jobs.Submit)))
+			r.Post("/jobs", tenantLimiter.MiddlewareJob(http.HandlerFunc(jobs.Submit)).ServeHTTP)
 			r.Get("/jobs", jobs.List)
 			r.Get("/jobs/{id}", jobs.Get)
 			r.Delete("/jobs/{id}", jobs.Cancel)
