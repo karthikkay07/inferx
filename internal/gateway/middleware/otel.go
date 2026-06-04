@@ -10,10 +10,10 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 
-	iauth "github.com/karthikkay07/inferx/internal/auth"
+	iauth "github.com/inferbolthq/inferbolt/internal/auth"
 )
 
-const tracerName = "inferx/gateway"
+const tracerName = "inferbolt/gateway"
 
 type traceIDKey struct{}
 

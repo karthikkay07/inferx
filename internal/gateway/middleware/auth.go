@@ -8,7 +8,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	iauth "github.com/karthikkay07/inferx/internal/auth"
+	iauth "github.com/inferbolthq/inferbolt/internal/auth"
 )
 
 type ctxKey string

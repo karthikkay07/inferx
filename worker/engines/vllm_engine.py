@@ -1,161 +1,151 @@
+import json
+import logging
+import re
 import subprocess
 import time
-import threading
-import requests
-from typing import Optional
+from pathlib import Path
 
-from .base import BaseEngine, BenchmarkResult, Workload
+import httpx
+
+from worker.engines.base import BaseEngine, EngineStartError
+from worker.models import EngineConfig, RawRequestResult
+
+logger = logging.getLogger(__name__)
+
+_PORT = 8100
+_BASE_URL = f"http://localhost:{_PORT}"
+_STARTUP_TIMEOUT = 120
 
 
-VLLM_HOST = "http://127.0.0.1:8001"
-VLLM_STARTUP_TIMEOUT = 120  # seconds
+def _model_slug(model: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9_-]", "_", model)
 
 
 class VLLMEngine(BaseEngine):
-    def __init__(self, model: str, gpu_memory_utilization: float = 0.9):
-        self.model = model
-        self.gpu_memory_utilization = gpu_memory_utilization
-        self._proc: Optional[subprocess.Popen] = None
 
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
+    def __init__(self) -> None:
+        self._proc: subprocess.Popen | None = None
+        self._model: str = ""
 
-    def start(self) -> None:
-        self._proc = subprocess.Popen(
-            [
-                "python", "-m", "vllm.entrypoints.openai.api_server",
-                "--model", self.model,
-                "--port", "8001",
-                "--gpu-memory-utilization", str(self.gpu_memory_utilization),
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-        self._tail_logs()
-        self._wait_ready()
+    def name(self) -> str:
+        return "vllm"
 
-    def stop(self) -> None:
-        if self._proc:
-            self._proc.terminate()
-            self._proc.wait(timeout=30)
-            self._proc = None
+    def start(self, model: str, config: EngineConfig) -> None:
+        self._model = model
+        log_path = Path(f"/tmp/inferbolt-vllm-{_model_slug(model)}.log")
+        cmd = [
+            "python", "-m", "vllm.entrypoints.openai.api_server",
+            "--model", model,
+            "--port", str(_PORT),
+        ]
+        if config.quantization:
+            cmd += ["--quantization", config.quantization]
+        if config.tensor_parallel > 1:
+            cmd += ["--tensor-parallel-size", str(config.tensor_parallel)]
+        cmd += ["--max-model-len", str(config.max_model_len)]
+        cmd += ["--gpu-memory-utilization", str(config.gpu_memory_utilization)]
 
-    # ------------------------------------------------------------------
-    # Benchmark
-    # ------------------------------------------------------------------
+        log_file = log_path.open("w")
+        self._proc = subprocess.Popen(cmd, stdout=log_file, stderr=log_file)
 
-    def run_benchmark(self, workload: Workload) -> BenchmarkResult:
-        prompt = "x " * workload.prompt_tokens  # synthetic prompt
-
-        ttft_samples: list[float] = []
-        itl_samples: list[float] = []
-        errors = 0
-
-        def single_request() -> None:
-            nonlocal errors
-            try:
-                t0 = time.perf_counter()
-                first_token = None
-                tokens_received = 0
-
-                with requests.post(
-                    f"{VLLM_HOST}/v1/completions",
-                    json={
-                        "model": self.model,
-                        "prompt": prompt,
-                        "max_tokens": workload.completion_tokens,
-                        "stream": True,
-                    },
-                    stream=True,
-                    timeout=120,
-                ) as resp:
-                    resp.raise_for_status()
-                    for chunk in resp.iter_lines():
-                        if chunk and chunk != b"data: [DONE]":
-                            now = time.perf_counter()
-                            if first_token is None:
-                                first_token = now
-                                ttft_samples.append((first_token - t0) * 1000)
-                            else:
-                                itl_samples.append((now - first_token) * 1000)
-                                first_token = now
-                            tokens_received += 1
-            except Exception:
-                errors += 1
-
-        deadline = time.monotonic() + workload.duration_secs
-        while time.monotonic() < deadline:
-            threads = [
-                threading.Thread(target=single_request)
-                for _ in range(workload.concurrency)
-            ]
-            for t in threads:
-                t.start()
-            for t in threads:
-                t.join()
-
-        total_requests = len(ttft_samples) + errors
-        return BenchmarkResult(
-            ttft_ms=_mean(ttft_samples),
-            itl_ms=_mean(itl_samples),
-            throughput_tok_per_s=_throughput(itl_samples, workload.duration_secs),
-            gpu_memory_mb=self._gpu_memory_mb(),
-            kv_cache_hit=self._kv_cache_hit(),
-            error_rate=errors / max(total_requests, 1),
-            cost_per_mtok=0.0,  # filled by cost/ module
-        )
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _wait_ready(self) -> None:
-        deadline = time.monotonic() + VLLM_STARTUP_TIMEOUT
+        deadline = time.monotonic() + _STARTUP_TIMEOUT
         while time.monotonic() < deadline:
             try:
-                r = requests.get(f"{VLLM_HOST}/health", timeout=2)
-                if r.status_code == 200:
-                    return
-            except requests.ConnectionError:
+                with httpx.Client(timeout=httpx.Timeout(10.0)) as client:
+                    r = client.get(f"{_BASE_URL}/health")
+                    if r.status_code == 200:
+                        return
+            except (httpx.ConnectError, httpx.ReadError, httpx.TimeoutException):
                 pass
-            time.sleep(2)
-        raise TimeoutError(f"vLLM did not become ready within {VLLM_STARTUP_TIMEOUT}s")
+            time.sleep(5)
 
-    def _tail_logs(self) -> None:
-        def _stream():
-            for line in self._proc.stdout:
-                print("[vllm]", line.decode().rstrip())
-        threading.Thread(target=_stream, daemon=True).start()
+        self.teardown()
+        raise EngineStartError(f"vLLM did not become ready within {_STARTUP_TIMEOUT}s")
 
-    def _gpu_memory_mb(self) -> int:
+    def teardown(self) -> None:
         try:
-            r = requests.get(f"{VLLM_HOST}/metrics", timeout=2)
-            for line in r.text.splitlines():
-                if "vllm:gpu_cache_usage_perc" in line and not line.startswith("#"):
-                    # rough proxy: not a real MB value, replace with nvidia-smi call for accuracy
-                    return 0
+            if self._proc is None:
+                return
+            self._proc.terminate()
+            try:
+                self._proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                self._proc.kill()
+            self._proc = None
+        except Exception as e:
+            logger.error("vLLM teardown error: %s", e)
+
+    def get_gpu_memory_mb(self) -> int:
+        try:
+            with httpx.Client(timeout=httpx.Timeout(10.0)) as client:
+                r = client.get(f"{_BASE_URL}/metrics")
+                for line in r.text.splitlines():
+                    if "vllm:gpu_cache_usage_perc" in line and not line.startswith("#"):
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            pct = float(parts[-1])
+                            return int(pct * 80 * 1024)
         except Exception:
             pass
         return 0
 
-    def _kv_cache_hit(self) -> float:
+    def get_kv_cache_hit_rate(self) -> float:
         try:
-            r = requests.get(f"{VLLM_HOST}/metrics", timeout=2)
-            for line in r.text.splitlines():
-                if "vllm:cpu_prefix_cache_hit_rate" in line and not line.startswith("#"):
-                    parts = line.split()
-                    return float(parts[-1])
+            with httpx.Client(timeout=httpx.Timeout(10.0)) as client:
+                r = client.get(f"{_BASE_URL}/metrics")
+                for line in r.text.splitlines():
+                    if "vllm:cpu_prefix_cache_hit_rate" in line and not line.startswith("#"):
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            return float(parts[-1])
         except Exception:
             pass
         return 0.0
 
+    async def _send_request(self, prompt: str, max_tokens: int) -> RawRequestResult:
+        try:
+            t_start = time.perf_counter()
+            ttft_ms = 0.0
+            output_tokens = 0
+            first_chunk = True
 
-def _mean(values: list[float]) -> float:
-    return sum(values) / len(values) if values else 0.0
+            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+                async with client.stream(
+                    "POST",
+                    f"{_BASE_URL}/v1/completions",
+                    json={
+                        "model": self._model,
+                        "prompt": prompt,
+                        "max_tokens": max_tokens,
+                        "stream": True,
+                        "stream_options": {"include_usage": True},
+                    },
+                ) as resp:
+                    async for line in resp.aiter_lines():
+                        now = time.perf_counter()
+                        if not line.startswith("data:"):
+                            continue
+                        payload = line[5:].strip()
+                        if payload == "[DONE]":
+                            break
+                        if first_chunk:
+                            ttft_ms = (now - t_start) * 1000
+                            first_chunk = False
+                        try:
+                            data = json.loads(payload)
+                            usage = data.get("usage") or {}
+                            if usage.get("completion_tokens"):
+                                output_tokens = usage["completion_tokens"]
+                        except (json.JSONDecodeError, KeyError):
+                            pass
 
-
-def _throughput(itl_samples: list[float], duration_secs: int) -> float:
-    if not itl_samples or duration_secs == 0:
-        return 0.0
-    return len(itl_samples) / duration_secs
+            total_ms = (time.perf_counter() - t_start) * 1000
+            itl_ms = (total_ms - ttft_ms) / max(output_tokens - 1, 1) if output_tokens > 1 else 0.0
+            return RawRequestResult(
+                ttft_ms=ttft_ms,
+                itl_ms=itl_ms,
+                total_ms=total_ms,
+                output_tokens=output_tokens,
+            )
+        except Exception as e:
+            return RawRequestResult(ttft_ms=0.0, itl_ms=0.0, total_ms=0.0, output_tokens=0, error=str(e))

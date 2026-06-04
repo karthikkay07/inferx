@@ -16,11 +16,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
 
-	cfg "github.com/karthikkay07/inferx/internal/config"
-	"github.com/karthikkay07/inferx/internal/jobs"
-	"github.com/karthikkay07/inferx/internal/metrics"
-	"github.com/karthikkay07/inferx/internal/queue"
-	"github.com/karthikkay07/inferx/internal/workers"
+	cfg "github.com/inferbolthq/inferbolt/internal/config"
+	"github.com/inferbolthq/inferbolt/internal/jobs"
+	"github.com/inferbolthq/inferbolt/internal/metrics"
+	"github.com/inferbolthq/inferbolt/internal/queue"
+	"github.com/inferbolthq/inferbolt/internal/workers"
 )
 
 func main() {

@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "inferbolt.fullname" . }}-operator
+  labels:
+    {{- include "inferbolt.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: inferbolt-operator
+  template:
+    metadata:
+      labels:
+        app: inferbolt-operator
+    spec:
+      serviceAccountName: inferbolt-operator
+      containers:
+        - name: operator
+          image: "{{ .Values.operator.image.repository }}:{{ .Values.operator.image.tag }}"
+          env:
+            - name: ORCHESTRATOR_URL
+              value: {{ .Values.orchestratorURL | quote }}
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: inferbolt-operator
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: inferbolt-operator
+rules:
+  - apiGroups: ["inferbolt.io"]
+    resources: ["optimizedinferences", "optimizedinferences/status"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: inferbolt-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: inferbolt-operator
+subjects:
+  - kind: ServiceAccount
+    name: inferbolt-operator
+    namespace: {{ .Release.Namespace }}

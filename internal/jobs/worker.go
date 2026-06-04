@@ -13,8 +13,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
 
-	"github.com/karthikkay07/inferx/internal/queue"
-	"github.com/karthikkay07/inferx/internal/workers"
+	"github.com/inferbolthq/inferbolt/internal/queue"
+	"github.com/inferbolthq/inferbolt/internal/workers"
 )
 
 type BenchmarkWorker struct {

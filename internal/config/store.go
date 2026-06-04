@@ -7,7 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/karthikkay07/inferx/internal/jobs"
+	"github.com/inferbolthq/inferbolt/internal/jobs"
 )
 
 type Store struct {
@@ -100,6 +100,62 @@ func (s *Store) SaveRecommendation(ctx context.Context, rec jobs.Recommendation)
 		return fmt.Errorf("save recommendation: %w", err)
 	}
 	return nil
+}
+
+// ListJobs returns a paginated slice of jobs for a tenant, filtered by state when non-empty.
+func (s *Store) ListJobs(ctx context.Context, tenantID, state string, limit, offset int) ([]jobs.Job, error) {
+	query := `
+		SELECT id, tenant_id, model, engines, workload_config, gpu_profile,
+		       state, created_at, updated_at,
+		       COALESCE(error_msg, ''), COALESCE(run_id, '')
+		FROM public.jobs
+		WHERE tenant_id = $1`
+	args := []any{tenantID}
+	if state != "" {
+		query += " AND state = $2 ORDER BY created_at DESC LIMIT $3 OFFSET $4"
+		args = append(args, state, limit, offset)
+	} else {
+		query += " ORDER BY created_at DESC LIMIT $2 OFFSET $3"
+		args = append(args, limit, offset)
+	}
+
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list jobs: %w", err)
+	}
+	defer rows.Close()
+
+	var out []jobs.Job
+	for rows.Next() {
+		var j jobs.Job
+		var wcJSON []byte
+		if err := rows.Scan(
+			&j.ID, &j.TenantID, &j.Model, &j.Engines, &wcJSON, &j.GPUProfile,
+			&j.State, &j.CreatedAt, &j.UpdatedAt, &j.ErrorMsg, &j.RunID,
+		); err != nil {
+			return nil, fmt.Errorf("scan job: %w", err)
+		}
+		if err := json.Unmarshal(wcJSON, &j.WorkloadConfig); err != nil {
+			return nil, fmt.Errorf("unmarshal workload config: %w", err)
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
+// CountJobs returns the total number of jobs for a tenant, filtered by state when non-empty.
+func (s *Store) CountJobs(ctx context.Context, tenantID, state string) (int, error) {
+	query := "SELECT COUNT(*) FROM public.jobs WHERE tenant_id = $1"
+	args := []any{tenantID}
+	if state != "" {
+		query += " AND state = $2"
+		args = append(args, state)
+	}
+	var n int
+	if err := s.pool.QueryRow(ctx, query, args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count jobs: %w", err)
+	}
+	return n, nil
 }
 
 // AppendAuditLog inserts an append-only audit entry. Never updates or deletes.

@@ -1,0 +1,118 @@
+name: InferBolt Benchmark
+description: Run LLM inference benchmarks and fail on performance regressions
+
+inputs:
+  server-url:
+    description: InferBolt server URL
+    required: true
+  api-key:
+    description: InferBolt API key
+    required: true
+    sensitive: true
+  model:
+    description: Model to benchmark
+    required: true
+  engines:
+    description: Comma-separated list of engines
+    required: false
+    default: vllm
+  gpu-profile:
+    description: GPU profile
+    required: false
+    default: a100-80gb
+  concurrency:
+    description: Benchmark concurrency
+    required: false
+    default: "32"
+  fail-on-regression:
+    description: Fail if tok/s drops more than threshold vs baseline
+    required: false
+    default: "true"
+  regression-threshold-pct:
+    description: Percentage drop in tok/s that triggers failure
+    required: false
+    default: "15"
+
+outputs:
+  job-id:
+    description: InferBolt job ID
+    value: ${{ steps.benchmark.outputs.job_id }}
+  tok-per-s:
+    description: Tokens per second achieved
+    value: ${{ steps.benchmark.outputs.tok_per_s }}
+  cost-per-mtok:
+    description: Cost per million tokens
+    value: ${{ steps.benchmark.outputs.cost_per_mtok }}
+  regression-detected:
+    description: Whether a regression was detected
+    value: ${{ steps.regression.outputs.regression_detected }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install InferBolt CLI
+      shell: bash
+      run: |
+        curl -fsSL https://inferbolt.dev/install.sh | sh
+
+    - name: Run benchmark
+      id: benchmark
+      shell: bash
+      env:
+        INFERBOLT_SERVER_URL: ${{ inputs.server-url }}
+        INFERBOLT_API_KEY: ${{ inputs.api-key }}
+      run: |
+        OUTPUT=$(inferbolt benchmark run \
+          --model "${{ inputs.model }}" \
+          --engines "${{ inputs.engines }}" \
+          --gpu "${{ inputs.gpu-profile }}" \
+          --concurrency "${{ inputs.concurrency }}" \
+          --output json)
+
+        JOB_ID=$(echo "$OUTPUT" | jq -r '.job_id')
+        TOK_PER_S=$(echo "$OUTPUT" | jq -r '.results[0].tok_per_s')
+        COST=$(echo "$OUTPUT" | jq -r '.results[0].cost_per_mtok')
+
+        echo "job_id=$JOB_ID" >> $GITHUB_OUTPUT
+        echo "tok_per_s=$TOK_PER_S" >> $GITHUB_OUTPUT
+        echo "cost_per_mtok=$COST" >> $GITHUB_OUTPUT
+
+    - name: Check for regression
+      id: regression
+      if: inputs.fail-on-regression == 'true'
+      shell: bash
+      env:
+        INFERBOLT_SERVER_URL: ${{ inputs.server-url }}
+        INFERBOLT_API_KEY: ${{ inputs.api-key }}
+      run: |
+        BASELINE=$(inferbolt metrics \
+          --engine "${{ inputs.engines }}" \
+          --model "${{ inputs.model }}" \
+          --since 7d \
+          --output json | jq '[.[].tok_per_s] | add/length')
+
+        CURRENT="${{ steps.benchmark.outputs.tok_per_s }}"
+        THRESHOLD="${{ inputs.regression-threshold-pct }}"
+
+        REGRESSION=$(python3 -c "
+        baseline=$BASELINE
+        current=$CURRENT
+        threshold=$THRESHOLD
+        if baseline > 0:
+            drop = ((baseline - current) / baseline) * 100
+            if drop > threshold:
+                print('true')
+                print(f'Performance regression: {drop:.1f}% drop in tok/s (threshold: {threshold}%)')
+            else:
+                print('false')
+        else:
+            print('false')
+        ")
+
+        IS_REGRESSION=$(echo "$REGRESSION" | head -1)
+        echo "regression_detected=$IS_REGRESSION" >> $GITHUB_OUTPUT
+
+        if [ "$IS_REGRESSION" = "true" ]; then
+          echo "::error::$(echo "$REGRESSION" | tail -1)"
+          exit 1
+        fi

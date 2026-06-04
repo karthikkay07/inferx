@@ -12,9 +12,9 @@ import (
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
 
-	iauth "github.com/karthikkay07/inferx/internal/auth"
-	"github.com/karthikkay07/inferx/internal/config"
-	"github.com/karthikkay07/inferx/internal/gateway/handler"
+	iauth "github.com/inferbolthq/inferbolt/internal/auth"
+	"github.com/inferbolthq/inferbolt/internal/config"
+	"github.com/inferbolthq/inferbolt/internal/gateway/handler"
 )
 
 type grpcServer struct {
@@ -35,7 +35,7 @@ func newGRPCServer(cfg config.GatewayConfig, jobs *handler.JobHandler) *grpcServ
 	reflection.Register(s)
 
 	// TODO: register generated service after running `make proto`
-	// inferxv1.RegisterGatewayServer(s, newGRPCJobsServer(jobs))
+	// inferboltv1.RegisterGatewayServer(s, newGRPCJobsServer(jobs))
 	_ = jobs
 
 	return &grpcServer{server: s, addr: cfg.GRPCAddr}

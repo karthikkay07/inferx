@@ -8,7 +8,7 @@ import (
 
 	"golang.org/x/time/rate"
 
-	iauth "github.com/karthikkay07/inferx/internal/auth"
+	iauth "github.com/inferbolthq/inferbolt/internal/auth"
 )
 
 // ---- IP-based global limiter ------------------------------------------------

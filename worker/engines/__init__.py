@@ -1,10 +1,18 @@
-from .base import BaseEngine, BenchmarkResult, Workload
-from .mock_engine import MockEngine
+from .base import BaseEngine, EngineStartError, EngineNotReadyError
 from .vllm_engine import VLLMEngine
+from .sglang_engine import SGLangEngine
+from .llamacpp_engine import LlamaCppEngine
+from .ollama_engine import OllamaEngine
 
-REGISTRY: dict[str, type[BaseEngine]] = {
+ENGINES: dict[str, type[BaseEngine]] = {
     "vllm": VLLMEngine,
-    "mock": MockEngine,
+    "sglang": SGLangEngine,
+    "llamacpp": LlamaCppEngine,
+    "ollama": OllamaEngine,
 }
 
-__all__ = ["BaseEngine", "BenchmarkResult", "Workload", "MockEngine", "VLLMEngine", "REGISTRY"]
+
+def get_engine(name: str) -> BaseEngine:
+    if name not in ENGINES:
+        raise ValueError(f"Unknown engine: {name}. Available: {list(ENGINES.keys())}")
+    return ENGINES[name]()

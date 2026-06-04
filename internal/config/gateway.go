@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/karthikkay07/inferx/internal/auth"
+	"github.com/inferbolthq/inferbolt/internal/auth"
 )
 
 // APIKeyEntry binds an API key to a tenant and tier.

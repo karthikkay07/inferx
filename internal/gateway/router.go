@@ -6,10 +6,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	iauth "github.com/karthikkay07/inferx/internal/auth"
-	"github.com/karthikkay07/inferx/internal/config"
-	"github.com/karthikkay07/inferx/internal/gateway/handler"
-	mw "github.com/karthikkay07/inferx/internal/gateway/middleware"
+	iauth "github.com/inferbolthq/inferbolt/internal/auth"
+	"github.com/inferbolthq/inferbolt/internal/config"
+	"github.com/inferbolthq/inferbolt/internal/gateway/handler"
+	mw "github.com/inferbolthq/inferbolt/internal/gateway/middleware"
 )
 
 func newRouter(

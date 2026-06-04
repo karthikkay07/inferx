@@ -42,11 +42,8 @@ type QueueClient struct {
 func NewQueueClient(ctx context.Context, pool *pgxpool.Pool) (*QueueClient, error) {
 	driver := riverpgxv5.New(pool)
 
-	migrator, err := rivermigrate.New(driver, nil)
-	if err != nil {
-		return nil, fmt.Errorf("new river migrator: %w", err)
-	}
-	if _, err = migrator.Migrate(ctx, rivermigrate.DirectionUp, nil); err != nil {
+	migrator := rivermigrate.New(driver, nil)
+	if _, err := migrator.Migrate(ctx, rivermigrate.DirectionUp, nil); err != nil {
 		return nil, fmt.Errorf("river migrate up: %w", err)
 	}
 
@@ -59,15 +56,15 @@ func NewQueueClient(ctx context.Context, pool *pgxpool.Pool) (*QueueClient, erro
 	return &QueueClient{client: rc, pool: pool}, nil
 }
 
-func (q *QueueClient) Enqueue(ctx context.Context, args BenchmarkJobArgs) (*river.InsertResult, error) {
-	res, err := q.client.Insert(ctx, args, &river.InsertOpts{
+func (q *QueueClient) Enqueue(ctx context.Context, args BenchmarkJobArgs) error {
+	_, err := q.client.Insert(ctx, args, &river.InsertOpts{
 		MaxAttempts: 3,
 		Queue:       "benchmarks",
 	})
 	if err != nil {
-		return nil, fmt.Errorf("enqueue benchmark job: %w", err)
+		return fmt.Errorf("enqueue benchmark job: %w", err)
 	}
-	return res, nil
+	return nil
 }
 
 // Start creates a worker-enabled River client and begins processing jobs.

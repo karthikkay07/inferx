@@ -1,0 +1,19 @@
+apiVersion: inferbolt.io/v1alpha1
+kind: OptimizedInference
+metadata:
+  name: llama3-production
+  namespace: default
+spec:
+  model: meta-llama/Llama-3.1-8B-Instruct
+  engine: vllm
+  gpuProfile: a100-80gb
+  replicas: 2
+  quantization: fp8
+  tensorParallel: 1
+  maxBatchSize: 256
+  maxModelLen: 8192
+  autoOptimize: true
+  resources:
+    gpuCount: 1
+    memoryGB: 80
+    cpuCores: 8

@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/karthikkay07/inferx/internal/jobs"
+	"github.com/inferbolthq/inferbolt/internal/jobs"
 )
 
 type MetricsWriter struct {

@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/karthikkay07/inferx/internal/config"
-	"github.com/karthikkay07/inferx/internal/gateway/handler"
-	mw "github.com/karthikkay07/inferx/internal/gateway/middleware"
+	"github.com/inferbolthq/inferbolt/internal/config"
+	"github.com/inferbolthq/inferbolt/internal/gateway/handler"
+	mw "github.com/inferbolthq/inferbolt/internal/gateway/middleware"
 )
 
 // stubClient satisfies handler.OrchestratorClient until the orchestrator layer is built.

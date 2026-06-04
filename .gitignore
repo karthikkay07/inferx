@@ -24,3 +24,5 @@ Thumbs.db
 # Secrets / config
 *.env
 *.local
+
+.claude/

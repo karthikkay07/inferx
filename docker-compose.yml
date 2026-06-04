@@ -2,16 +2,16 @@ services:
   postgres:
     image: timescale/timescaledb:latest-pg16
     environment:
-      POSTGRES_DB: inferx
-      POSTGRES_USER: inferx
-      POSTGRES_PASSWORD: inferx
+      POSTGRES_DB: inferbolt
+      POSTGRES_USER: inferbolt
+      POSTGRES_PASSWORD: inferbolt
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./migrations:/docker-entrypoint-initdb.d
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U inferx"]
+      test: ["CMD-SHELL", "pg_isready -U inferbolt"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -24,10 +24,59 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgres://inferx:inferx@postgres:5432/inferx
+      DATABASE_URL: postgres://inferbolt:inferbolt@postgres:5432/inferbolt
       PORT: 8081
     ports:
       - "8081:8081"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8081/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  router:
+    build:
+      context: .
+      dockerfile: Dockerfile.router
+    depends_on:
+      postgres:
+        condition: service_healthy
+      orchestrator:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://inferbolt:inferbolt@postgres:5432/inferbolt
+      ORCHESTRATOR_URL: http://orchestrator:8081
+      PORT: 8082
+    ports:
+      - "8082:8082"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8082/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  collector:
+    build:
+      context: .
+      dockerfile: Dockerfile.collector
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://inferbolt:inferbolt@postgres:5432/inferbolt
+      PORT: 8083
+      DRIFT_CHECK_INTERVAL: 5m
+      DRIFT_LOOKBACK: 1h
+      DRIFT_WARNING_PCT: 15.0
+      DRIFT_CRITICAL_PCT: 30.0
+      SLACK_WEBHOOK_URL: ""  # Set this for Slack notifications
+    ports:
+      - "8083:8083"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8083/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
 volumes:
   pgdata:
