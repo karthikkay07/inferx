@@ -25,12 +25,17 @@ type BenchmarkWorker struct {
 	httpClient *http.Client
 }
 
+// Timeout sets the River job timeout to 60 minutes.
+func (w *BenchmarkWorker) Timeout(_ *river.Job[queue.BenchmarkJobArgs]) time.Duration {
+	return 60 * time.Minute
+}
+
 func NewBenchmarkWorker(db *pgxpool.Pool, reg *workers.WorkerRegistry, cache *ristretto.Cache) *BenchmarkWorker {
 	return &BenchmarkWorker{
 		db:         db,
 		registry:   reg,
 		cache:      cache,
-		httpClient: &http.Client{Timeout: 60 * time.Second},
+		httpClient: &http.Client{Timeout: 60 * time.Minute},
 	}
 }
 
