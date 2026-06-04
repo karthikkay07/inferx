@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 _PORT = 8101
 _BASE_URL = f"http://localhost:{_PORT}"
-_STARTUP_TIMEOUT = 120
+_STARTUP_TIMEOUT = 600  # 10 minutes — model download + load on first run
 
 
 def _model_slug(model: str) -> str:
