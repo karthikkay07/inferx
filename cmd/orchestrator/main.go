@@ -154,7 +154,7 @@ func main() {
 
 	r.Get("/internal/jobs/{jobID}/state", func(w http.ResponseWriter, r *http.Request) {
 		jobID := chi.URLParam(r, "jobID")
-		job, err := store.GetJob(r.Context(), jobID, "internal")
+		job, err := store.GetJobByID(r.Context(), jobID)
 		if err != nil {
 			http.Error(w, `{"error":"job not found"}`, http.StatusNotFound)
 			return

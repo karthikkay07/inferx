@@ -102,6 +102,29 @@ func (s *Store) SaveRecommendation(ctx context.Context, rec jobs.Recommendation)
 	return nil
 }
 
+// GetJobByID fetches a job by ID only, without tenant filtering. Used internally.
+func (s *Store) GetJobByID(ctx context.Context, jobID string) (*jobs.Job, error) {
+	var j jobs.Job
+	var wcJSON []byte
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, tenant_id, model, engines, workload_config, gpu_profile,
+		       state, created_at, updated_at,
+		       COALESCE(error_msg, ''), COALESCE(run_id, '')
+		FROM public.jobs
+		WHERE id = $1`, jobID,
+	).Scan(
+		&j.ID, &j.TenantID, &j.Model, &j.Engines, &wcJSON, &j.GPUProfile,
+		&j.State, &j.CreatedAt, &j.UpdatedAt, &j.ErrorMsg, &j.RunID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get job %s: %w", jobID, err)
+	}
+	if err = json.Unmarshal(wcJSON, &j.WorkloadConfig); err != nil {
+		return nil, fmt.Errorf("unmarshal workload config: %w", err)
+	}
+	return &j, nil
+}
+
 // ListJobs returns a paginated slice of jobs for a tenant, filtered by state when non-empty.
 func (s *Store) ListJobs(ctx context.Context, tenantID, state string, limit, offset int) ([]jobs.Job, error) {
 	query := `

@@ -2,7 +2,6 @@ import asyncio
 import json
 import logging
 import os
-import socket
 import uuid
 from contextlib import asynccontextmanager
 
@@ -75,10 +74,10 @@ async def _register_with_orchestrator() -> None:
         logger.warning("ORCHESTRATOR_URL not set — skipping registration")
         return
 
-    hostname = socket.gethostname()
+    worker_url = os.environ.get("WORKER_URL", f"http://127.0.0.1:{PORT}")
     payload = {
         "id": WORKER_ID,
-        "url": f"http://{hostname}:{PORT}",
+        "url": worker_url,
         "gpu_type": os.environ.get("GPU_PROFILE", "cpu"),
         "status": "idle",
     }
