@@ -61,7 +61,7 @@ func (w *BenchmarkWorker) Work(ctx context.Context, job *river.Job[queue.Benchma
 	if err != nil {
 		return fmt.Errorf("marshal job args: %w", err)
 	}
-	dispatchCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	dispatchCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	req, err := http.NewRequestWithContext(dispatchCtx, http.MethodPost, entry.URL+"/run", bytes.NewReader(body))
 	if err != nil {
