@@ -35,9 +35,12 @@ func NewBenchmarkWorker(db *pgxpool.Pool, reg *workers.WorkerRegistry, cache *ri
 }
 
 func (w *BenchmarkWorker) Work(ctx context.Context, job *river.Job[queue.BenchmarkJobArgs]) error {
-	// Step 1: transition to Running — River retries if this fails.
+	// Step 1: transition to Running — skip if already running (River retry).
 	if err := updateJobState(ctx, w.db, job.Args.JobID, StateRunning); err != nil {
-		return fmt.Errorf("transition to running: %w", err)
+		// Allow retry if already running
+		if err.Error() != "invalid state transition: running → running" {
+			return fmt.Errorf("transition to running: %w", err)
+		}
 	}
 
 	// Step 2: find an idle Python worker for the requested GPU profile.
